@@ -96,10 +96,6 @@ public class AttachmentTypeSelectorAdapter extends IconListAdapter {
                     R.drawable.ic_attach_contact_info, ADD_CONTACT_AS_TEXT);
         }
 
-        // calendar event support
-        addItem(data, context.getResources().getString(R.string.attach_add_calendar_events),
-                R.drawable.ic_attach_vcard, ADD_CALENDAR_EVENTS);
-
         return data;
     }
 

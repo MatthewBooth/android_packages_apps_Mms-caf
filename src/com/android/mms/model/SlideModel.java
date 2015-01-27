@@ -54,8 +54,8 @@ public class SlideModel extends Model implements List<MediaModel>, EventListener
     private boolean mCanAddImage = true;
     private boolean mCanAddAudio = true;
     private boolean mCanAddVideo = true;
-    private boolean mCanAddVcard = true;
-    private boolean mCanAddVCal = true;
+    private boolean mCanAddVcard = false;
+    private boolean mCanAddVCal = false;
 
     private int mDuration;
     private boolean mVisible = true;
