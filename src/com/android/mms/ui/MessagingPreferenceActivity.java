@@ -76,6 +76,7 @@ import com.android.mms.MmsConfig;
 import com.android.mms.R;
 import com.android.mms.transaction.TransactionService;
 import com.android.mms.util.Recycler;
+import com.android.mms.QTIBackupMMS;
 import com.android.mms.QTIBackupSMS;
 
 import java.io.File;
@@ -112,6 +113,11 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     public static final String GROUP_MMS_MODE           = "pref_key_mms_group_mms";
     public static final String SMS_CDMA_PRIORITY        = "pref_key_sms_cdma_priority";
 
+    // Unicode
+    public static final String UNICODE_STRIPPING            = "pref_key_unicode_stripping_value";
+    public static final String UNICODE_STRIPPING_LEAVE_INTACT  = "0";
+    public static final String UNICODE_STRIPPING_NON_DECODABLE = "1";
+
     // Expiry of MMS
     private final static String EXPIRY_ONE_WEEK = "604800"; // 7 * 24 * 60 * 60
     private final static String EXPIRY_TWO_DAYS = "172800"; // 2 * 24 * 60 * 60
@@ -121,6 +127,10 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     public static final String QM_LOCKSCREEN_ENABLED     = "pref_key_qm_lockscreen";
     public static final String QM_CLOSE_ALL_ENABLED      = "pref_key_close_all";
     public static final String QM_DARK_THEME_ENABLED     = "pref_dark_theme";
+
+    // Vibrate pattern
+    public static final String NOTIFICATION_VIBRATE_PATTERN =
+            "pref_key_mms_notification_vibrate_pattern";
 
     // Menu entries
     private static final int MENU_RESTORE_DEFAULTS    = 1;
@@ -172,6 +182,7 @@ public class MessagingPreferenceActivity extends PreferenceActivity
     private EditTextPreference mSmsSignatureEditPref;
     private ArrayList<Preference> mSmscPrefList = new ArrayList<Preference>();
     private static final int CONFIRM_CLEAR_SEARCH_HISTORY_DIALOG = 3;
+    private ListPreference mUnicodeStripping;
 
     // Whether or not we are currently enabled for SMS. This field is updated in onResume to make
     // sure we notice if the user has changed the default SMS app.
@@ -313,6 +324,9 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         mEnableQmLockscreenPref = (SwitchPreference) findPreference(QM_LOCKSCREEN_ENABLED);
         mEnableQmCloseAllPref = (SwitchPreference) findPreference(QM_CLOSE_ALL_ENABLED);
         mEnableQmDarkThemePref = (SwitchPreference) findPreference(QM_DARK_THEME_ENABLED);
+
+        // Unicode Stripping
+        mUnicodeStripping = (ListPreference) findPreference(UNICODE_STRIPPING);
 
         // SMS Sending Delay
         mMessageSendDelayPref = (ListPreference) findPreference(SEND_DELAY_DURATION);
@@ -863,7 +877,7 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         return super.onPreferenceTreeClick(preferenceScreen, preference);
     }
 
-    private class BackupRestoreSMSTask extends AsyncTask<Void, Void, File> {
+    private class BackupRestoreSMSTask extends AsyncTask<Void, Void, ArrayList<File>> {
 
         private File mRestoreFile;
         private ProgressDialog mDialog;
@@ -883,51 +897,96 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         }
 
         @Override
-        protected File doInBackground(Void... params) {
+        protected ArrayList<File> doInBackground(Void... params) {
             File folder = new File(Environment.getExternalStorageDirectory(), BACKUP_FOLDER_NAME);
             if (!folder.exists()) {
                 folder.mkdir();
             }
-            File operationFile;
+            File operationFile = null;
+            File operationFileSMS = null;
+            File operationFileMMS = null;
+            String sysTime = String.valueOf(System.currentTimeMillis());
+
             if (mShouldBackup) {
-                operationFile = new File(folder, String.valueOf(System.currentTimeMillis()));
+                operationFileSMS = new File(folder, sysTime + "_SMS");
+                operationFileMMS = new File(folder, sysTime + "_MMS");
             } else {
                 try {
-                    operationFile = MessageUtils.unzipBackupFile(mRestoreFile,
+                    ArrayList<File> backupFiles = MessageUtils.unzipBackupFile(mRestoreFile,
                             folder.getAbsolutePath());
+
+                    if (backupFiles != null && backupFiles.size() >= 1) {
+                        // Find SMS file and MMS file backups
+                        for (File f : backupFiles) {
+                            if (f.getName().contains("SMS")) {
+                                operationFileSMS = f;
+                            }
+                            if (f.getName().contains("MMS")) {
+                                operationFileMMS = f;
+                            }
+                        }
+                    }
+
+                    if (operationFileSMS == null && operationFileMMS == null) {
+                        return null;
+                    }
+
                 } catch (IOException e) {
                     e.printStackTrace();
                     return null;
                 }
             }
-            QTIBackupSMS smsBackup = new QTIBackupSMS(getApplicationContext(), operationFile);
+            QTIBackupMMS mmsBackup = new QTIBackupMMS(getApplicationContext(), operationFileMMS);
+            QTIBackupSMS smsBackup = new QTIBackupSMS(getApplicationContext(), operationFileSMS);
+            ArrayList<File> files = new ArrayList<File>();
             if (mShouldBackup) {
+                mmsBackup.performBackup();
                 smsBackup.performBackup();
 
                 // compress and return zip file
-                String zipFileName = operationFile.getAbsolutePath() + ".zip";
+                String zipFileName = folder + "/" + sysTime + ".zip";
 
                 try {
-                    MessageUtils.zipFile(operationFile, zipFileName);
+                    ArrayList<File> filesTemp = new ArrayList<File>();
+                    if (operationFileSMS != null) {
+                        filesTemp.add(operationFileSMS);
+                    }
+                    if (operationFileMMS != null) {
+                        filesTemp.add(operationFileMMS);
+                    }
+                    MessageUtils.zipFile(filesTemp, zipFileName);
                 } catch (IOException e) {
                     e.printStackTrace();
                     return null;
                 }
 
-                operationFile.delete();
+                if (operationFileSMS != null) {
+                    operationFileSMS.delete();
+                }
+                if (operationFileMMS != null) {
+                    operationFileMMS.delete();
+                }
                 operationFile = new File(zipFileName);
+                files.add(operationFile);
             } else {
+                mmsBackup.performRestore();
                 smsBackup.performRestore();
+                if (operationFileSMS != null) {
+                    files.add(operationFileSMS);
+                }
+                if (operationFileMMS != null) {
+                    files.add(operationFileMMS);
+                }
             }
-            return operationFile;
+            return files;
         }
 
         @Override
-        protected void onPostExecute(final File file) {
+        protected void onPostExecute(final ArrayList<File> files) {
             mDialog.cancel();
 
             if (mShouldBackup) {
-                if (file == null) {
+                if (files == null || files.size() == 0) {
                     Toast.makeText(MessagingPreferenceActivity.this,
                             R.string.export_sms_failed_toast,
                             Toast.LENGTH_SHORT).show();
@@ -935,6 +994,7 @@ public class MessagingPreferenceActivity extends PreferenceActivity
                     return;
                 }
 
+                final File file = files.get(0);
                 AlertDialog.Builder builder =
                         new AlertDialog.Builder(MessagingPreferenceActivity.this);
                 builder.setMessage(R.string.export_sms_toast)
@@ -953,10 +1013,14 @@ public class MessagingPreferenceActivity extends PreferenceActivity
                                 });
                 builder.show();
             } else {
-                if (file != null) {
-                    file.delete();
+                boolean success = false;
+                if (files != null) {
+                    for (File f : files) {
+                        success = true;
+                        f.delete();
+                    }
                 }
-                Toast.makeText(MessagingPreferenceActivity.this, (file == null) ?
+                Toast.makeText(MessagingPreferenceActivity.this, !success ?
                         R.string.import_sms_failed_toast : R.string.import_sms_toast,
                         Toast.LENGTH_SHORT).show();
             }
@@ -1069,6 +1133,24 @@ public class MessagingPreferenceActivity extends PreferenceActivity
         }
         if (!foundEntries) {
             c = cr.query(Telephony.Sms.Draft.CONTENT_URI, null, null, null, null);
+            if (c.getCount() > 0) {
+                foundEntries = true;
+            }
+        }
+        if (!foundEntries) {
+            c = cr.query(Telephony.Mms.Inbox.CONTENT_URI, null, null, null, null);
+            if (c.getCount() > 0) {
+                foundEntries = true;
+            }
+        }
+        if (!foundEntries) {
+            c = cr.query(Telephony.Mms.Sent.CONTENT_URI, null, null, null, null);
+            if (c.getCount() > 0) {
+                foundEntries = true;
+            }
+        }
+        if (!foundEntries) {
+            c = cr.query(Telephony.Mms.Draft.CONTENT_URI, null, null, null, null);
             if (c.getCount() > 0) {
                 foundEntries = true;
             }
